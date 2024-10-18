@@ -16,18 +16,22 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/signal"
+	"strings"
+	"time"
+
+	"github.com/NimbleMarkets/ntcharts/linechart/streamlinechart"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/choria-io/fisk"
 	"github.com/guptarohit/asciigraph"
 	"github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
 	iu "github.com/nats-io/natscli/internal/util"
 	terminal "golang.org/x/term"
-	"os"
-	"os/signal"
-	"strings"
-	"time"
 )
 
+/*
 type SrvGraphCmd struct {
 	id string
 	js bool
@@ -40,6 +44,7 @@ func configureServerGraphCommand(srv *fisk.CmdClause) {
 	graph.Arg("server", "Server ID or Name to inspect").StringVar(&c.id)
 	graph.Flag("jetstream", "Draw JetStream statistics").Short('j').UnNegatableBoolVar(&c.js)
 }
+*/
 
 func (c *SrvGraphCmd) graph(_ *fisk.ParseContext) error {
 	if !c.js {
@@ -179,21 +184,55 @@ func (c *SrvGraphCmd) graphJetStream() error {
 
 		lastStateTs = time.Now()
 
-		cpuPlot := asciigraph.Plot(cpuUsed,
+		/*
+			cpuPlot := asciigraph.Plot(cpuUsed,
 			asciigraph.Caption(fmt.Sprintf("CPU %% Used (normalized for %d cores)", vz.Cores)),
 			asciigraph.Height(height/6-2),
 			asciigraph.Width(width),
 			asciigraph.Precision(0))
+		*/
 
-		memPlot := asciigraph.Plot(memUsed,
-			asciigraph.Caption("Memory Storage in GB"),
-			asciigraph.Height(height/6-2),
-			asciigraph.Width(width))
+		cpuChart := streamlinechart.New(width, height/6-2)
+		for _, v := range cpuUsed {
+			cpuChart.Push(v)
+		}
+		cpuChart.Draw()
+		cpuLayout := lipgloss.NewStyle().SetString(fmt.Sprintf("CPU %% Used (normalized for %d cores)", vz.Cores)).Align(lipgloss.Center).Width(width)
+		cpuPlot := cpuChart.View() + "\n" + cpuLayout.Render()
 
-		filePlot := asciigraph.Plot(fileUsed,
-			asciigraph.Caption("File Storage in GB"),
-			asciigraph.Height(height/6-2),
-			asciigraph.Width(width))
+		/*
+			memPlot := asciigraph.Plot(memUsed,
+				asciigraph.Caption("Memory Storage in GB"),
+				asciigraph.Height(height/6-2),
+				asciigraph.Width(width))
+		*/
+
+		memChart := streamlinechart.New(width, height/6-2)
+		for _, v := range memUsed {
+			memChart.Push(v)
+		}
+		memChart.Draw()
+		memLayout := lipgloss.NewStyle().SetString("Memory Storage in GB").Align(lipgloss.Center).Width(width)
+		memPlot := memChart.View() + "\n" + memLayout.Render()
+
+		/*
+			filePlot := asciigraph.Plot(fileUsed,
+				asciigraph.Caption("File Storage in GB"),
+				asciigraph.Height(height/6-2),
+				asciigraph.Width(width))
+		*/
+
+		fileChart := streamlinechart.New(width, height/6-2)
+		fileChart.SetYRange(0.0, 0.0000009)
+		fileChart.SetViewYRange(0.0, 0.0000009)
+		fileChart.SetYStep(5)
+		for _, v := range fileUsed {
+			fileChart.Push(v)
+		}
+		fileChart.DrawXYAxisAndLabel()
+		fileChart.Draw()
+		fileLayout := lipgloss.NewStyle().SetString("File Storage in GB").Align(lipgloss.Center).Width(width)
+		filePlot := fileChart.View() + "\n" + fileLayout.Render()
 
 		assetsPlot := asciigraph.Plot(haAssets,
 			asciigraph.Caption("HA Assets"),
@@ -254,7 +293,7 @@ func (c *SrvGraphCmd) graphServer() error {
 		lastStateTs = time.Now()
 
 		cpuPlot := asciigraph.Plot(cpuUsed,
-			asciigraph.Caption(fmt.Sprintf("CPU %% Used (normalized for %d cores)", vz.Cores)),
+			asciigraph.Caption(CPU %% Used (normalized for %d cores),
 			asciigraph.Height(height/6-2),
 			asciigraph.Width(width),
 			asciigraph.Precision(0))
