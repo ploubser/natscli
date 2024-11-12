@@ -29,8 +29,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/guptarohit/asciigraph"
 	"github.com/nats-io/natscli/columns"
+	"github.com/nats-io/natscli/internal/asciigraph"
 	iu "github.com/nats-io/natscli/internal/util"
 	terminal "golang.org/x/term"
 	"gopkg.in/yaml.v3"
