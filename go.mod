@@ -70,3 +70,5 @@ require (
 	google.golang.org/protobuf v1.35.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
+
+replace github.com/guptarohit/asciigraph v0.7.2 => github.com/ploubser/asciigraph v0.0.0-20241112105232-397de402db5b
