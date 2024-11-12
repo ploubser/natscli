@@ -503,7 +503,6 @@ func (c *streamCmd) graphAction(_ *fisk.ParseContext) error {
 				asciigraph.Height(height/3-2),
 				asciigraph.LowerBound(0),
 				asciigraph.Precision(0),
-				asciigraph.ValueFormatter(f),
 			)
 
 			limitedRatePlot := asciigraph.Plot(limitedRates,
