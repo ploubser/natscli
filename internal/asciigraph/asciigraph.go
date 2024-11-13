@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"math"
 	"strings"
-
-	"github.com/davecgh/go-spew/spew"
 )
 
 // Plot returns ascii graph for a series.
@@ -59,6 +57,9 @@ func PlotMany(data [][]float64, options ...Option) string {
 			maximum = maxVal
 		}
 	}
+	// Nou het ons die max value in die data
+	// en die min value in die data
+
 	if config.LowerBound != nil && *config.LowerBound < minimum {
 		minimum = *config.LowerBound
 	}
@@ -66,6 +67,7 @@ func PlotMany(data [][]float64, options ...Option) string {
 		maximum = *config.UpperBound
 	}
 	interval := math.Abs(maximum - minimum)
+	// dis die gap tussen max en min
 
 	if config.Height <= 0 {
 		config.Height = calculateHeight(interval)
@@ -99,6 +101,11 @@ func PlotMany(data [][]float64, options ...Option) string {
 		rows = config.Height
 	}
 
+	// This guards against the extreme case where the window is very small
+	if rows < 0 {
+		rows = 0
+	}
+
 	plot := make([][]cell, rows+1)
 
 	// initialise empty 2D grid
@@ -130,7 +137,7 @@ func PlotMany(data [][]float64, options ...Option) string {
 	}
 
 	maxNumLength, minNumLength := 0, math.MaxInt64
-	var magnitudes []float64
+	//var magnitudes []float64
 
 	if config.ValueFormatter == nil {
 		maxNumLength = len(fmt.Sprintf("%0.*f", precision, maximum))
@@ -141,6 +148,7 @@ func PlotMany(data [][]float64, options ...Option) string {
 		intmax2 = config.Height
 	}
 
+	var maxWidth int
 	// calculate label magnitudes and the length when formatted using the ValueFormatter
 	for y := intmin2; y < intmax2+1; y++ {
 		var magnitude float64
@@ -149,7 +157,8 @@ func PlotMany(data [][]float64, options ...Option) string {
 		} else {
 			magnitude = float64(y)
 		}
-		magnitudes = append(magnitudes, magnitude)
+
+		//magnitudes = append(magnitudes, magnitude)
 
 		if config.ValueFormatter != nil {
 			l := len(config.ValueFormatter(magnitude))
@@ -160,11 +169,9 @@ func PlotMany(data [][]float64, options ...Option) string {
 				minNumLength = l
 			}
 		}
-	}
-	maxWidth := int(math.Max(float64(maxNumLength), float64(minNumLength)))
 
-	// axis and labels reusing the previously calculated magnitudes
-	for w, magnitude := range magnitudes {
+		maxWidth = int(math.Max(float64(maxNumLength), float64(minNumLength)))
+
 		var label string
 		if config.ValueFormatter == nil {
 			label = fmt.Sprintf("%*.*f", maxWidth+1, precision, magnitude)
@@ -173,21 +180,39 @@ func PlotMany(data [][]float64, options ...Option) string {
 			label = strings.Repeat(" ", maxWidth+1-len(val)) + val
 		}
 
+		w := y - intmin2
 		h := int(math.Max(float64(config.Offset)-float64(len(label)), 0))
-
-		if w >= len(plot) {
-			spew.Dump(magnitude, plot, w, h)
-		}
-
-		if h >= len(plot[w]) {
-			spew.Dump(magnitude, plot, w, h)
-		}
 
 		plot[w][h].Text = label
 		plot[w][h].Color = config.LabelColor
 		plot[w][config.Offset-1].Text = "┤"
 		plot[w][config.Offset-1].Color = config.AxisColor
+
 	}
+	/*
+		// axis and labels reusing the previously calculated magnitudes
+		for w, magnitude := range magnitudes {
+			var label string
+			if config.ValueFormatter == nil {
+				label = fmt.Sprintf("%*.*f", maxWidth+1, precision, magnitude)
+			} else {
+				val := config.ValueFormatter(magnitude)
+				label = strings.Repeat(" ", maxWidth+1-len(val)) + val
+			}
+
+			h := int(math.Max(float64(config.Offset)-float64(len(label)), 0))
+
+			if w >= len(plot) {
+				fmt.Println("It's w")
+				spew.Dump(magnitudes, magnitude, w, h)
+			}
+
+			plot[w][h].Text = label
+			plot[w][h].Color = config.LabelColor
+			plot[w][config.Offset-1].Text = "┤"
+			plot[w][config.Offset-1].Color = config.AxisColor
+		}
+	*/
 
 	for i := range data {
 		series := data[i]
