@@ -207,7 +207,8 @@ func (c *SrvGraphCmd) graphJetStream() error {
 			asciigraph.Caption("HA Assets"),
 			asciigraph.Height(height/6-2),
 			asciigraph.Width(width),
-			asciigraph.Precision(0))
+			asciigraph.Precision(0),
+			asciigraph.ValueFormatter(fFloat2Int))
 
 		apiRatesPlot := asciigraph.Plot(apiRates,
 			asciigraph.Caption("API Requests / second"),
@@ -220,7 +221,8 @@ func (c *SrvGraphCmd) graphJetStream() error {
 			asciigraph.Caption("Pending API Requests"),
 			asciigraph.Height(height/6-2),
 			asciigraph.Width(width),
-			asciigraph.Precision(0))
+			asciigraph.Precision(0),
+			asciigraph.ValueFormatter(fFloat2Int))
 
 		return []string{cpuPlot, assetsPlot, apiRatesPlot, pendingPlot, filePlot, memPlot}, nil
 	})
@@ -281,13 +283,15 @@ func (c *SrvGraphCmd) graphServer() error {
 			asciigraph.Caption("Connections"),
 			asciigraph.Height(height/6-2),
 			asciigraph.Width(width),
-			asciigraph.Precision(0))
+			asciigraph.Precision(0),
+			asciigraph.ValueFormatter(fFloat2Int))
 
 		subscriptionsPlot := asciigraph.Plot(subscriptions,
 			asciigraph.Caption("Subscriptions"),
 			asciigraph.Height(height/6-2),
 			asciigraph.Width(width),
-			asciigraph.Precision(0))
+			asciigraph.Precision(0),
+			asciigraph.ValueFormatter(fFloat2Int))
 
 		messagesPlot := asciigraph.Plot(messagesRate,
 			asciigraph.Caption("Messages In+Out / second"),

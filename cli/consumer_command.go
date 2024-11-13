@@ -533,6 +533,7 @@ func (c *consumerCmd) graphAction(_ *fisk.ParseContext) error {
 				asciigraph.Height(height/4-2),
 				asciigraph.LowerBound(0),
 				asciigraph.Precision(0),
+				asciigraph.ValueFormatter(fFloat2Int),
 			)
 
 			outstandingPlot := asciigraph.Plot(outstandingMessages,
@@ -541,6 +542,7 @@ func (c *consumerCmd) graphAction(_ *fisk.ParseContext) error {
 				asciigraph.Height(height/4-2),
 				asciigraph.LowerBound(0),
 				asciigraph.Precision(0),
+				asciigraph.ValueFormatter(fFloat2Int),
 			)
 
 			iu.ClearScreen()

@@ -33,3 +33,7 @@ func fiBytes(v uint64) string {
 func f(v any) string {
 	return columns.F(v)
 }
+
+func fFloat2Int(v any) string {
+	return columns.F(uint64(v.(float64)))
+}
