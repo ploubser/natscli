@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"math"
 	"strings"
-
-	"github.com/davecgh/go-spew/spew"
 )
 
 // Plot returns ascii graph for a series.
@@ -182,11 +180,6 @@ func PlotMany(data [][]float64, options ...Option) string {
 		}
 
 		h := int(math.Max(float64(config.Offset)-float64(len(label)), 0))
-
-		if w >= len(plot) {
-			fmt.Println(config.Caption)
-			spew.Dump(w, ratio, interval, intmin2, intmax2, rows, int(math.Abs(float64(intmax2-intmin2))))
-		}
 
 		plot[w][h].Text = label
 		plot[w][h].Color = config.LabelColor

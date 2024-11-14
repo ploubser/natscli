@@ -7,7 +7,6 @@ require (
 	github.com/HdrHistogram/hdrhistogram-go v1.1.2
 	github.com/choria-io/fisk v0.6.4
 	github.com/choria-io/scaffold v0.0.2
-	github.com/davecgh/go-spew v1.1.1
 	github.com/dustin/go-humanize v1.0.1
 	github.com/emicklei/dot v1.6.2
 	github.com/expr-lang/expr v1.16.9
