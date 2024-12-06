@@ -30,11 +30,13 @@ require (
 	github.com/synadia-io/jwt-auth-builder.go v0.0.0-20240829124321-43722a8ce3ce
 	github.com/tylertreat/hdrhistogram-writer v0.0.0-20210816161836-2e440612a39f
 	golang.org/x/crypto v0.29.0
-	golang.org/x/exp v0.0.0-20241009180824-f66d83c29e7c
+	golang.org/x/exp v0.0.0-20241108190413-2d47ceb2692f
 	golang.org/x/term v0.26.0
 	gopkg.in/gizak/termui.v1 v1.0.0-20151021151108-e62b5929642a
 	gopkg.in/yaml.v3 v3.0.1
 )
+
+replace github.com/nats-io/jsm.go v0.1.1-0.20241119145046-e1d638961b90 => /Users/ploubser/go/src/github.com/nats-io/jsm.go
 
 require (
 	dario.cat/mergo v1.0.1 // indirect

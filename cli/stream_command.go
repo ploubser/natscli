@@ -42,6 +42,7 @@ import (
 	"github.com/gosuri/uiprogress"
 	"github.com/nats-io/jsm.go"
 	"github.com/nats-io/jsm.go/api"
+	"github.com/nats-io/jsm.go/balancer"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/natscli/columns"
 	"gopkg.in/yaml.v3"
@@ -155,6 +156,8 @@ type streamCmd struct {
 	nc             *nats.Conn
 	mgr            *jsm.Manager
 	chunkSize      string
+
+	threshold int
 }
 
 type streamStat struct {
@@ -399,6 +402,10 @@ Finding streams with certain subjects configured:
 	graph := str.Command("graph", "View a graph of Stream activity").Action(c.graphAction)
 	graph.Arg("stream", "The name of the Stream to graph").StringVar(&c.stream)
 
+	// tmp
+	balancer := str.Command("balance-consumers", "Balances the consumers on the stream").Action(c.balanceAction)
+	balancer.Arg("stream", "Stream name").StringVar(&c.stream)
+
 	strCluster := str.Command("cluster", "Manages a clustered Stream").Alias("c")
 	strClusterDown := strCluster.Command("step-down", "Force a new leader election by standing down the current leader").Alias("stepdown").Alias("sd").Alias("elect").Alias("down").Alias("d").Action(c.leaderStandDown)
 	strClusterDown.Arg("stream", "Stream to act on").StringVar(&c.stream)
@@ -408,6 +415,38 @@ Finding streams with certain subjects configured:
 	strClusterRemovePeer.Arg("stream", "The stream to act on").StringVar(&c.stream)
 	strClusterRemovePeer.Arg("peer", "The name of the peer to remove").StringVar(&c.peerName)
 	strClusterRemovePeer.Flag("force", "Force sealing without prompting").Short('f').UnNegatableBoolVar(&c.force)
+
+}
+
+func (c *streamCmd) balanceAction(_ *fisk.ParseContext) error {
+	var err error
+
+	c.nc, c.mgr, err = prepareHelper("", natsOpts()...)
+	if err != nil {
+		return nil
+	}
+
+	c.connectAndAskStream()
+
+	stream, err := c.loadStream(c.stream)
+	if err != nil {
+		return err
+	}
+
+	consumers := []*jsm.Consumer{}
+	stream.EachConsumer(func(c *jsm.Consumer) {
+		consumers = append(consumers, c)
+	})
+
+	if len(consumers) > 0 {
+		balancer, err := balancer.New(c.mgr.NatsConn(), api.NewDefaultLogger(api.InfoLevel))
+		if err != nil {
+			return err
+		}
+
+		balancer.BalanceConsumers(consumers)
+	}
+	return nil
 }
 
 func init() {
