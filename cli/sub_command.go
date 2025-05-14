@@ -270,14 +270,10 @@ func (c *subCmd) startSubjectReporting(ctx context.Context, subjMu *sync.Mutex, 
 	}()
 }
 
-func (c *subCmd) subscribe(p *fisk.ParseContext) error {
-	nc, err := newNatsConn("", natsOpts()...)
-	if err != nil {
-		return err
-	}
-	defer nc.Close()
-
-	c.jetStream = c.sseq > 0 || len(c.durable) > 0 || c.deliverAll || c.deliverNew || c.deliverLast || c.deliverSince != "" || c.deliverLastPerSubject || c.stream != ""
+func (c *subCmd) validateInputs(nc *nats.Conn) error {
+	c.jetStream = c.sseq > 0 ||
+		len(c.durable) > 0 || c.deliverAll || c.deliverNew ||
+		c.deliverLast || c.deliverSince != "" || c.deliverLastPerSubject || c.stream != ""
 
 	switch {
 	case len(c.subjects) == 0 && c.inbox:
@@ -309,63 +305,30 @@ func (c *subCmd) subscribe(p *fisk.ParseContext) error {
 	}
 
 	if c.dump != "" && c.dump != "-" {
-		err = os.MkdirAll(c.dump, 0700)
-		if err != nil {
+		if err := os.MkdirAll(c.dump, 0700); err != nil {
 			return err
 		}
 	}
 
-	var (
-		subs           []*nats.Subscription
-		mu             = sync.Mutex{}
-		subjMu         = sync.Mutex{}
-		dump           = c.dump != ""
-		ctr            = uint(0)
-		ignoreSubjects = iu.SplitCLISubjects(c.ignoreSubjects)
-		ctx, cancel    = context.WithCancel(ctx)
+	return nil
+}
 
-		replySub *nats.Subscription
-		matchMap map[string]*nats.Msg
-
-		subjectReportMap      map[string]int64
-		subjectBytesReportMap map[string]int64
-
-		startTime = time.Now()
-	)
-	defer cancel()
-
-	if c.graphOnly {
-		c.width, c.height, err = terminal.GetSize(int(os.Stdout.Fd()))
-		if err != nil {
-			return fmt.Errorf("failed to get terminal dimensions: %w", err)
-		}
-		if c.width < 20 || c.height < 20 {
-			return fmt.Errorf("please increase terminal dimensions")
-		}
-		if c.width > 15 {
-			c.width -= 10
-		}
-		if c.height > 10 {
-			c.height -= 6
-		}
-		c.messageRates = make(map[string]*subMessageRate)
-		for _, subject := range c.subjects {
-			c.messageRates[subject] = &subMessageRate{
-				rates: make([]float64, c.width),
-			}
-		}
-	}
-
-	// If the wait timeout is set, then we will cancel after the timer fires.
-	var t *time.Timer
-	if c.wait > 0 {
-		t = time.AfterFunc(c.wait, func() {
-			cancel()
-		})
-		defer t.Stop()
-	}
-
-	handler := func(m *nats.Msg) {
+func (c *subCmd) createMsgHandler(
+	nc *nats.Conn,
+	mu *sync.Mutex,
+	subjMu *sync.Mutex,
+	subs *[]*nats.Subscription,
+	ignoreSubjects []string,
+	ctr *uint,
+	startTime time.Time,
+	subjectReportMap map[string]int64,
+	subjectBytesReportMap map[string]int64,
+	matchMap map[string]*nats.Msg,
+	cancel context.CancelFunc,
+	t *time.Timer,
+	dump bool,
+) nats.MsgHandler {
+	return func(m *nats.Msg) {
 		mu.Lock()
 		defer mu.Unlock()
 
@@ -376,7 +339,7 @@ func (c *subCmd) subscribe(p *fisk.ParseContext) error {
 
 		if c.jsAck && info != nil {
 			defer func() {
-				err = m.Respond(nil)
+				err := m.Respond(nil)
 				if err != nil && !dump && !c.raw {
 					log.Printf("Acknowledging message via subject %s failed: %s\n", m.Reply, err)
 				}
@@ -401,7 +364,7 @@ func (c *subCmd) subscribe(p *fisk.ParseContext) error {
 			}
 		}
 
-		ctr++
+		*ctr++
 		switch {
 		case c.reportSubjects:
 			subjMu.Lock()
@@ -425,12 +388,12 @@ func (c *subCmd) subscribe(p *fisk.ParseContext) error {
 			if c.match && m.Reply != "" {
 				matchMap[m.Reply] = m
 			} else {
-				c.printMsg(m, nil, ctr, startTime)
+				c.printMsg(m, nil, *ctr, startTime)
 			}
 		}
 
-		if ctr == c.limit {
-			for _, sub := range subs {
+		if c.limit > 0 && *ctr == c.limit {
+			for _, sub := range *subs {
 				sub.Unsubscribe()
 			}
 
@@ -447,8 +410,17 @@ func (c *subCmd) subscribe(p *fisk.ParseContext) error {
 			return
 		}
 	}
+}
 
-	matchHandler := func(reply *nats.Msg) {
+func (c *subCmd) createMatchHandler(
+	mu *sync.Mutex,
+	matchMap map[string]*nats.Msg,
+	ctr uint,
+	startTime time.Time,
+	replySub **nats.Subscription,
+	cancel context.CancelFunc,
+) nats.MsgHandler {
+	return func(reply *nats.Msg) {
 		mu.Lock()
 		defer mu.Unlock()
 
@@ -461,11 +433,254 @@ func (c *subCmd) subscribe(p *fisk.ParseContext) error {
 		delete(matchMap, reply.Subject)
 
 		// if reached limit and matched all requests
-		if ctr == c.limit && len(matchMap) == 0 {
-			replySub.Unsubscribe()
+		if c.limit > 0 && ctr == c.limit && len(matchMap) == 0 {
+			if replySub != nil {
+				(*replySub).Unsubscribe()
+			}
 			cancel()
 		}
 	}
+}
+
+func (c *subCmd) graphSubscribe(ctx context.Context, nc *nats.Conn, handler nats.MsgHandler, subs *[]*nats.Subscription, subjMu *sync.Mutex) error {
+	width, height, err := terminal.GetSize(int(os.Stdout.Fd()))
+	if err != nil {
+		return fmt.Errorf("failed to get terminal dimensions: %w", err)
+	}
+	if width < 20 || height < 20 {
+		return fmt.Errorf("please increase terminal dimensions")
+	}
+	if width > 15 {
+		width -= 10
+	}
+	if height > 10 {
+		height -= 6
+	}
+
+	c.width = width
+	c.height = height
+	c.messageRates = make(map[string]*subMessageRate)
+	for _, subject := range c.subjects {
+		c.messageRates[subject] = &subMessageRate{
+			rates: make([]float64, width),
+		}
+	}
+
+	if len(c.subjects) > 4 {
+		return fmt.Errorf("maximum 4 subject patterns may be graphed")
+	}
+
+	for _, subj := range c.subjects {
+		sub, err := nc.Subscribe(subj, handler)
+		if err != nil {
+			return err
+		}
+		*subs = append(*subs, sub)
+	}
+
+	c.startGraph(ctx, subjMu)
+	return nil
+}
+
+func (c *subCmd) reportSubscribe(ctx context.Context, nc *nats.Conn, handler nats.MsgHandler, subs *[]*nats.Subscription, subjMu *sync.Mutex, subjectReportMap map[string]int64, subjectBytesReportMap map[string]int64) error {
+	for _, subj := range c.subjects {
+		sub, err := nc.Subscribe(subj, handler)
+		if err != nil {
+			return err
+		}
+		*subs = append(*subs, sub)
+	}
+
+	c.startSubjectReporting(ctx, subjMu, subjectReportMap, subjectBytesReportMap, c.reportSubjectsCount)
+	return nil
+}
+
+func (c *subCmd) jetStreamSubscribe(nc *nats.Conn, handler nats.MsgHandler, subs *[]*nats.Subscription, ignoreSubjects []string) error {
+	js, err := nc.JetStream(jsOpts()...)
+	if err != nil {
+		return err
+	}
+
+	opts := []nats.SubOpt{
+		nats.EnableFlowControl(),
+		nats.IdleHeartbeat(5 * time.Second),
+		nats.AckNone(),
+	}
+
+	if c.headersOnly || c.subjectsOnly {
+		opts = append(opts, nats.HeadersOnly())
+	}
+
+	// Check if durable exists and adjust accordingly
+	var bindDurable bool
+	if c.durable != "" {
+		con, err := js.ConsumerInfo(c.stream, c.durable)
+		if err == nil {
+			bindDurable = true
+			c.jsAck = con.Config.AckPolicy != nats.AckNonePolicy
+			log.Printf("Subscribing to JetStream Stream %q using existing durable %q", c.stream, c.durable)
+
+			switch {
+			case len(con.Config.FilterSubjects) > 1:
+				return fmt.Errorf("cannot subscribe to multi filter consumers")
+			case len(con.Config.FilterSubjects) == 1:
+				c.subjects = con.Config.FilterSubjects
+			case con.Config.FilterSubject != "":
+				c.subjects = []string{con.Config.FilterSubject}
+			}
+		} else if errors.Is(err, nats.ErrConsumerNotFound) {
+			opts = append(opts, nats.Durable(c.durable))
+		} else {
+			return err
+		}
+	}
+
+	subMsg := c.firstSubject()
+	if c.stream != "" {
+		if len(c.subjects) == 0 {
+			str, err := js.StreamInfo(c.stream)
+			if err != nil {
+				return err
+			}
+			subMsg = f(str.Config.Subjects)
+		}
+		opts = append(opts, nats.BindStream(c.stream))
+	}
+
+	ignoredSubjInfo := ""
+	if len(ignoreSubjects) > 0 {
+		ignoredSubjInfo = fmt.Sprintf("\nIgnored subjects: %s", f(ignoreSubjects))
+	}
+
+	switch {
+	case c.sseq > 0:
+		log.Printf("Subscribing to JetStream Stream holding messages with subject %s starting with sequence %d %s", subMsg, c.sseq, ignoredSubjInfo)
+		opts = append(opts, nats.StartSequence(c.sseq))
+	case c.deliverLast:
+		log.Printf("Subscribing to JetStream Stream holding messages with subject %s starting with the last message received %s", subMsg, ignoredSubjInfo)
+		opts = append(opts, nats.DeliverLast())
+	case c.deliverAll:
+		log.Printf("Subscribing to JetStream Stream holding messages with subject %s starting with the first message received %s", subMsg, ignoredSubjInfo)
+		opts = append(opts, nats.DeliverAll())
+	case c.deliverNew:
+		log.Printf("Subscribing to JetStream Stream holding messages with subject %s delivering any new messages received %s", subMsg, ignoredSubjInfo)
+		opts = append(opts, nats.DeliverNew())
+	case c.deliverSince != "":
+		d, err := fisk.ParseDuration(c.deliverSince)
+		if err != nil {
+			return err
+		}
+		start := time.Now().Add(-1 * d)
+		log.Printf("Subscribing to JetStream Stream holding messages with subject %s starting with messages since %s %s", subMsg, f(d), ignoredSubjInfo)
+		opts = append(opts, nats.StartTime(start))
+	case c.deliverLastPerSubject:
+		log.Printf("Subscribing to JetStream Stream holding messages with subject %s for the last messages for each subject in the Stream %s", subMsg, ignoredSubjInfo)
+		opts = append(opts, nats.DeliverLastPerSubject())
+	}
+
+	if bindDurable {
+		sub, err := js.Subscribe(c.firstSubject(), handler, nats.Bind(c.stream, c.durable))
+		if err != nil {
+			return err
+		}
+		*subs = append(*subs, sub)
+	} else {
+		c.jsAck = false
+		sub, err := js.Subscribe(c.firstSubject(), handler, opts...)
+		if err != nil {
+			return err
+		}
+		*subs = append(*subs, sub)
+	}
+
+	return nil
+}
+
+func (c *subCmd) queueSubscribe(nc *nats.Conn, handler nats.MsgHandler, subs *[]*nats.Subscription) error {
+	sub, err := nc.QueueSubscribe(c.firstSubject(), c.queue, handler)
+	if err != nil {
+		return err
+	}
+	*subs = append(*subs, sub)
+	return nil
+}
+
+func (c *subCmd) defaultSubscribe(nc *nats.Conn, handler nats.MsgHandler, subs *[]*nats.Subscription) error {
+	for _, subj := range c.subjects {
+		sub, err := nc.Subscribe(subj, handler)
+		if err != nil {
+			return err
+		}
+		*subs = append(*subs, sub)
+	}
+	return nil
+}
+
+func (c *subCmd) subscribe(p *fisk.ParseContext) error {
+	nc, err := newNatsConn("", natsOpts()...)
+	if err != nil {
+		return err
+	}
+	defer nc.Close()
+
+	err = c.validateInputs(nc)
+	if err != nil {
+		return err
+	}
+
+	var (
+		subs           []*nats.Subscription
+		mu             = sync.Mutex{}
+		subjMu         = sync.Mutex{}
+		ctr            = uint(0)
+		ignoreSubjects = iu.SplitCLISubjects(c.ignoreSubjects)
+		ctx, cancel    = context.WithCancel(ctx)
+		dump           = c.dump != ""
+
+		replySub *nats.Subscription
+		matchMap = make(map[string]*nats.Msg)
+
+		subjectReportMap      map[string]int64
+		subjectBytesReportMap map[string]int64
+
+		startTime = time.Now()
+	)
+
+	defer cancel()
+
+	// If the wait timeout is set, then we will cancel after the timer fires.
+	var t *time.Timer
+	if c.wait > 0 {
+		t = time.AfterFunc(c.wait, func() {
+			cancel()
+		})
+		defer t.Stop()
+	}
+
+	handler := c.createMsgHandler(
+		nc,
+		&mu,
+		&subjMu,
+		&subs,
+		ignoreSubjects,
+		&ctr,
+		startTime,
+		subjectReportMap,
+		subjectBytesReportMap,
+		matchMap,
+		cancel,
+		t,
+		dump,
+	)
+
+	matchHandler := c.createMatchHandler(
+		&mu,
+		matchMap,
+		ctr,
+		startTime,
+		&replySub,
+		cancel,
+	)
 
 	if c.match {
 		inSubj := "_INBOX.>"
@@ -477,7 +692,6 @@ func (c *subCmd) subscribe(p *fisk.ParseContext) error {
 			log.Printf("Matching replies with inbox prefix %v", inSubj)
 		}
 
-		matchMap = make(map[string]*nats.Msg)
 		replySub, err = nc.Subscribe(inSubj, matchHandler)
 		if err != nil {
 			return err
@@ -507,145 +721,15 @@ func (c *subCmd) subscribe(p *fisk.ParseContext) error {
 
 	switch {
 	case c.graphOnly:
-		if len(c.subjects) > 4 {
-			return fmt.Errorf("maximum 4 subject patterns may be graphed")
-		}
-
-		for _, subj := range c.subjects {
-			sub, err := nc.Subscribe(subj, handler)
-			if err != nil {
-				return err
-			}
-			subs = append(subs, sub)
-		}
-
-		c.startGraph(ctx, &subjMu)
-
+		err = c.graphSubscribe(ctx, nc, handler, &subs, &subjMu)
 	case c.reportSubjects:
-		for _, subj := range c.subjects {
-			sub, err := nc.Subscribe(subj, handler)
-			if err != nil {
-				return err
-			}
-			subs = append(subs, sub)
-		}
-
-		c.startSubjectReporting(ctx, &subjMu, subjectReportMap, subjectBytesReportMap, c.reportSubjectsCount)
-
+		err = c.reportSubscribe(ctx, nc, handler, &subs, &subjMu, subjectReportMap, subjectBytesReportMap)
 	case c.jetStream:
-		var js nats.JetStreamContext
-		js, err = nc.JetStream(jsOpts()...)
-		if err != nil {
-			return err
-		}
-
-		opts := []nats.SubOpt{
-			nats.EnableFlowControl(),
-			nats.IdleHeartbeat(5 * time.Second),
-			nats.AckNone(),
-		}
-
-		if c.headersOnly || c.subjectsOnly {
-			opts = append(opts, nats.HeadersOnly())
-		}
-
-		// Check if the durable exists and ignore all the other options.
-		var bindDurable bool
-		if len(c.durable) > 0 {
-			con, err := js.ConsumerInfo(c.stream, c.durable)
-			if err == nil {
-				bindDurable = true
-				c.jsAck = con.Config.AckPolicy != nats.AckNonePolicy
-				log.Printf("Subscribing to JetStream Stream %q using existing durable %q", c.stream, c.durable)
-				switch {
-				case len(con.Config.FilterSubjects) > 1:
-					return fmt.Errorf("cannot subscribe to multi filter consumers")
-				case len(con.Config.FilterSubjects) == 1:
-					c.subjects = con.Config.FilterSubjects
-				case con.Config.FilterSubject != "":
-					c.subjects = []string{con.Config.FilterSubject}
-				}
-			} else if errors.Is(err, nats.ErrConsumerNotFound) {
-				opts = append(opts, nats.Durable(c.durable))
-			} else {
-				return err
-			}
-		}
-
-		subMsg := c.firstSubject()
-		if c.stream != "" {
-			if len(c.subjects) == 0 {
-				str, err := js.StreamInfo(c.stream)
-				if err != nil {
-					return err
-				}
-				subMsg = f(str.Config.Subjects)
-			}
-			opts = append(opts, nats.BindStream(c.stream))
-		}
-
-		switch {
-		case c.sseq > 0:
-			log.Printf("Subscribing to JetStream Stream holding messages with subject %s starting with sequence %d %s", subMsg, c.sseq, ignoredSubjInfo)
-			opts = append(opts, nats.StartSequence(c.sseq))
-		case c.deliverLast:
-			log.Printf("Subscribing to JetStream Stream holding messages with subject %s starting with the last message received %s", subMsg, ignoredSubjInfo)
-			opts = append(opts, nats.DeliverLast())
-		case c.deliverAll:
-			log.Printf("Subscribing to JetStream Stream holding messages with subject %s starting with the first message received %s", subMsg, ignoredSubjInfo)
-
-			opts = append(opts, nats.DeliverAll())
-		case c.deliverNew:
-			log.Printf("Subscribing to JetStream Stream holding messages with subject %s delivering any new messages received %s", subMsg, ignoredSubjInfo)
-
-			opts = append(opts, nats.DeliverNew())
-		case c.deliverSince != "":
-			var d time.Duration
-			d, err = fisk.ParseDuration(c.deliverSince)
-			if err != nil {
-				return err
-			}
-
-			start := time.Now().Add(-1 * d)
-			log.Printf("Subscribing to JetStream Stream holding messages with subject %s starting with messages since %s %s", subMsg, f(d), ignoredSubjInfo)
-
-			opts = append(opts, nats.StartTime(start))
-		case c.deliverLastPerSubject:
-			log.Printf("Subscribing to JetStream Stream holding messages with subject %s for the last messages for each subject in the Stream %s", subMsg, ignoredSubjInfo)
-			opts = append(opts, nats.DeliverLastPerSubject())
-		}
-
-		if bindDurable {
-			sub, err := js.Subscribe(c.firstSubject(), handler, nats.Bind(c.stream, c.durable))
-			if err != nil {
-				return err
-			}
-			subs = append(subs, sub)
-		} else {
-			c.jsAck = false
-			sub, err := js.Subscribe(c.firstSubject(), handler, opts...)
-			if err != nil {
-				return err
-			}
-			subs = append(subs, sub)
-		}
-
+		err = c.jetStreamSubscribe(nc, handler, &subs, ignoreSubjects)
 	case c.queue != "":
-		sub, err := nc.QueueSubscribe(c.firstSubject(), c.queue, handler)
-		if err != nil {
-			return err
-		}
-		subs = append(subs, sub)
-
+		err = c.queueSubscribe(nc, handler, &subs)
 	default:
-		for _, subj := range c.subjects {
-			sub, err := nc.Subscribe(subj, handler)
-			if err != nil {
-				return err
-			}
-			subs = append(subs, sub)
-		}
-
+		err = c.defaultSubscribe(nc, handler, &subs)
 	}
 	if err != nil {
 		return err
