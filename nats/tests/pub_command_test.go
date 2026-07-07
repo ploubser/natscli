@@ -88,7 +88,7 @@ func TestCLIPubSendOnNewline(t *testing.T) {
 			defer sub.Unsubscribe()
 			nc.Flush()
 
-			// --force-stdin required for testing as a terminal is not present
+			// --force-stdin is redundant in the non-tty test harness, kept for explicitness
 			runNatsCliWithInput(t, strings.Join(expected, "\n"), fmt.Sprintf("--server='%s' pub --send-on newline --force-stdin %s", srv.ClientURL(), subject))
 
 			if len(messages) != len(expected) {
@@ -114,7 +114,7 @@ func TestCLIPubSendOnNewline(t *testing.T) {
 			defer sub.Unsubscribe()
 			nc.Flush()
 
-			// --force-stdin required for testing as a terminal is not present
+			// --force-stdin is redundant in the non-tty test harness, kept for explicitness
 			runNatsCliWithInput(t, expected, fmt.Sprintf("--server='%s' pub --force-stdin %s", srv.ClientURL(), subject))
 
 			if len(messages) != 1 {
@@ -122,6 +122,53 @@ func TestCLIPubSendOnNewline(t *testing.T) {
 			}
 			if len(messages) > 0 && messages[0] != expected {
 				t.Errorf("expected message %q got %q", expected, messages[0])
+			}
+			return nil
+		})
+	})
+}
+
+func TestCLIPubStdin(t *testing.T) {
+	t.Run("Publish reads piped stdin without --force-stdin", func(t *testing.T) {
+		withNatsServer(t, func(t *testing.T, srv *server.Server, nc *nats.Conn) error {
+			subject := "test-piped-stdin"
+			var messages []string
+			expected := "piped payload"
+			sub, _ := nc.Subscribe(subject, func(m *nats.Msg) {
+				messages = append(messages, string(m.Data))
+			})
+			defer sub.Unsubscribe()
+			nc.Flush()
+
+			runNatsCliWithInput(t, expected, fmt.Sprintf("--server='%s' pub %s", srv.ClientURL(), subject))
+
+			if len(messages) != 1 {
+				t.Errorf("expected 1 message and received %d", len(messages))
+			}
+			if len(messages) > 0 && messages[0] != expected {
+				t.Errorf("expected message %q got %q", expected, messages[0])
+			}
+			return nil
+		})
+	})
+
+	t.Run("Publish with no stdin and no body sends one empty message", func(t *testing.T) {
+		withNatsServer(t, func(t *testing.T, srv *server.Server, nc *nats.Conn) error {
+			subject := "test-empty-stdin"
+			var messages []string
+			sub, _ := nc.Subscribe(subject, func(m *nats.Msg) {
+				messages = append(messages, string(m.Data))
+			})
+			defer sub.Unsubscribe()
+			nc.Flush()
+
+			runNatsCli(t, fmt.Sprintf("--server='%s' pub %s", srv.ClientURL(), subject))
+
+			if len(messages) != 1 {
+				t.Errorf("expected 1 message and received %d", len(messages))
+			}
+			if len(messages) > 0 && messages[0] != "" {
+				t.Errorf("expected empty message body got %q", messages[0])
 			}
 			return nil
 		})
